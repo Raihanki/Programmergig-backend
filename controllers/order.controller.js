@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Order from "../models/order.model.js";
 import Gig from "../models/gig.model.js";
+import Stripe from "stripe";
 
 export const store = async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -16,6 +17,16 @@ export const store = async (req, res) => {
     return res.status(404).json({ message: "Gig not found" });
   }
 
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+  const payment = await stripe.paymentIntents.create({
+    amount: gig.price * 100,
+    currency: "usd",
+    automatic_payment_methods: {
+      enabled: true,
+    },
+  });
+
   const data = {
     gigId: gig._id.toString(),
     image: gig.coverImage,
@@ -24,11 +35,11 @@ export const store = async (req, res) => {
     price: gig.price,
     sellerId: gig.userId,
     buyerId: req.user._id.toString(),
-    paymentIntent: "todonexttime",
+    paymentIntent: payment.id,
   };
 
-  const results = await Order.create(data);
-  return res.status(201).json({ data: results });
+  await Order.create(data);
+  return res.status(201).json({ client_secret: payment.client_secret });
 };
 
 export const index = async (req, res) => {
@@ -43,6 +54,24 @@ export const index = async (req, res) => {
     });
 
     return res.status(200).json({ data });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+export const update = async (req, res) => {
+  try {
+    const paymentIntent = req.body.payment_intent;
+    const order = await Order.findOneAndUpdate(
+      { paymentIntent },
+      { isCompleted: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    return res.status(200).json({ message: "Order Completed" });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
